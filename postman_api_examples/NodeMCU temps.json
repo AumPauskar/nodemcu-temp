@@ -71,11 +71,52 @@
           "variable": []
         }
       }
+    },
+    {
+      "name": "Thingspeak read",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "https://api.thingspeak.com/channels/3430136/feeds.json?api_key={{public_api_key}}&results=1",
+          "protocol": "https",
+          "host": [
+            "api",
+            "thingspeak",
+            "com"
+          ],
+          "path": [
+            "channels",
+            "3430136",
+            "feeds.json"
+          ],
+          "query": [
+            {
+              "key": "api_key",
+              "value": "{{public_api_key}}"
+            },
+            {
+              "key": "results",
+              "value": "1"
+            }
+          ],
+          "variable": []
+        }
+      }
     }
   ],
   "variable": [
     {
       "key": "WiFiURL",
+      "value": "",
+      "type": "default"
+    },
+    {
+      "key": "public_api_key",
       "value": "",
       "type": "default"
     }
