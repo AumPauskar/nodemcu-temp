@@ -1,121 +1,169 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
 #include <WiFiClient.h>
+#include <ArduinoOTA.h>
 #include "DHT.h"
-#include "secrets.h" // Stores Wi-Fi & API Credentials
+#include "secrets.h"
 
-// -------------------- Configuration --------------------
-// Sleep duration in microseconds: 30 minutes = 30 * 60 * 1,000,000 us
-const uint64_t DEEP_SLEEP_TIME = 30ULL * 60ULL * 1000000ULL; 
-
-// -------------------- DHT11 --------------------
+// DHT11 Configuration
 #define DHTPIN D2
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
+ESP8266WebServer server(80);
 
-// -------------------- Battery --------------------
-#define BATTERY_PIN A0
-const float DIVIDER_RATIO = (120.0 + 47.0) / 47.0;
-const float ADC_MAX_VOLTAGE = 3.30;
+// Globals & Timers
+float humidity = 0;
+float temperature = 0;
 
-// -------------------- Functions --------------------
+unsigned long prevUploadMillis = 0;
+unsigned long prevSensorMillis = 0;
 
-float readBatteryVoltage() {
-  long total = 0;
-  for (int i = 0; i < 20; i++) {
-    total += analogRead(BATTERY_PIN);
-    delay(2);
-  }
-  float raw = total / 20.0;
-  float adcVoltage = raw * (ADC_MAX_VOLTAGE / 1023.0);
-  return adcVoltage * DIVIDER_RATIO;
+// Intervals
+const unsigned long SENSOR_INTERVAL = 2000;                      // Read sensor every 2 seconds
+const unsigned long UPLOAD_INTERVAL = UPLOAD_INTERVAL_MIN * 60000UL; // Convert minutes from secrets.h to ms
+
+void handleStatus() {
+  String json = "{";
+  json += "\"temperature\":" + String(temperature, 1) + ",";
+  json += "\"humidity\":" + String(humidity, 1) + ",";
+  json += "\"uptime_ms\":" + String(millis()) + ",";
+  json += "\"wifi_rssi\":" + String(WiFi.RSSI());
+  json += "}";
+  server.send(200, "application/json", json);
 }
 
-int getBatteryPercent(float voltage) {
-  if (voltage >= 8.40) return 100;
-  if (voltage >= 8.30) return 95;
-  if (voltage >= 8.20) return 90;
-  if (voltage >= 8.10) return 85;
-  if (voltage >= 8.00) return 80;
-  if (voltage >= 7.90) return 72;
-  if (voltage >= 7.80) return 65;
-  if (voltage >= 7.70) return 58;
-  if (voltage >= 7.60) return 50;
-  if (voltage >= 7.50) return 42;
-  if (voltage >= 7.40) return 35;
-  if (voltage >= 7.30) return 28;
-  if (voltage >= 7.20) return 20;
-  if (voltage >= 7.10) return 15;
-  if (voltage >= 7.00) return 10;
-  if (voltage >= 6.80) return 5;
-  return 0;
+void handleNotFound() {
+  server.send(404, "application/json", "{\"error\":\"Not found. Use /status\"}");
+}
+
+void handleForceThingSpeakUpdate() {
+  if (WiFi.status() != WL_CONNECTED) {
+    server.send(503, "application/json", "{\"error\":\"Wi-Fi is not connected\"}");
+    return;
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+  String thingspeakUrl = String(THINGSPEAK_SERVER) +
+                         "?api_key=" + String(THINGSPEAK_API_KEY) +
+                         "&field1=" + String(temperature, 1) +
+                         "&field2=" + String(humidity, 1);
+
+  http.begin(client, thingspeakUrl);
+  int httpCode = http.GET();
+  String entryId = httpCode > 0 ? http.getString() : "";
+  http.end();
+
+  // ThingSpeak returns HTTP 200 with body "0" when it does not accept an update.
+  if (httpCode == HTTP_CODE_OK && entryId != "0" && entryId.length() > 0) {
+    Serial.printf("Forced ThingSpeak update accepted (entry %s)\n", entryId.c_str());
+    server.send(200, "application/json", "{\"success\":true,\"entry_id\":" + entryId + "}");
+  } else {
+    Serial.printf("Forced ThingSpeak update rejected (HTTP %d, response: %s)\n", httpCode, entryId.c_str());
+    server.send(429, "application/json", "{\"success\":false,\"http_code\":" + String(httpCode) + ",\"response\":\"" + entryId + "\"}");
+  }
+}
+
+void uploadData() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wi-Fi not connected. Skipping upload.");
+    return;
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+
+  // ---------------- 1. Send to ThingSpeak ----------------
+  String thingspeakUrl = String(THINGSPEAK_SERVER) +
+                         "?api_key=" + String(THINGSPEAK_API_KEY) +
+                         "&field1=" + String(temperature, 1) +
+                         "&field2=" + String(humidity, 1);
+
+  http.begin(client, thingspeakUrl);
+  int tsCode = http.GET();
+  if (tsCode > 0) {
+    Serial.printf("ThingSpeak Upload OK (%d)\n", tsCode);
+  } else {
+    Serial.printf("ThingSpeak Error: %s\n", http.errorToString(tsCode).c_str());
+  }
+  http.end();
+
+  // ---------------- 2. Send to Local Server ----------------
+  // Sends a standard HTTP POST request formatted as JSON
+  http.begin(client, LOCAL_SERVER_ENDPOINT);
+  http.addHeader("Content-Type", "application/json");
+
+  String jsonPayload = "{";
+  jsonPayload += "\"temperature\":" + String(temperature, 1) + ",";
+  jsonPayload += "\"humidity\":" + String(humidity, 1);
+  jsonPayload += "}";
+
+  int localCode = http.POST(jsonPayload);
+  if (localCode > 0) {
+    Serial.printf("Local Server Upload OK (%d)\n", localCode);
+  } else {
+    Serial.printf("Local Server Error: %s\n", http.errorToString(localCode).c_str());
+  }
+  http.end();
 }
 
 void setup() {
   Serial.begin(115200);
-  
-  // 1. Initialize DHT Sensor
+
+  // Initialize DHT Sensor
   dht.begin();
-  delay(100); // Give sensor a moment to initialize
 
-  // 2. Read Sensors immediately
-  float humidity = dht.readHumidity();
-  float temperature = dht.readTemperature();
-  float batteryVoltage = readBatteryVoltage();
-  int batteryPercent = getBatteryPercent(batteryVoltage);
-
-  // If reading fails, retry up to 3 times
-  int retries = 0;
-  while ((isnan(humidity) || isnan(temperature)) && retries < 3) {
-    delay(1000);
-    humidity = dht.readHumidity();
-    temperature = dht.readTemperature();
-    retries++;
-  }
-
-  // 3. Connect to Wi-Fi with a timeout
+  // Connect Wi-Fi
   WiFi.mode(WIFI_STA);
   WiFi.begin(SECRET_SSID, SECRET_PASS);
 
-  int wifiRetries = 0;
-  while (WiFi.status() != WL_CONNECTED && wifiRetries < 20) {
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-    wifiRetries++;
   }
+  Serial.println("\nConnected! IP Address: ");
+  Serial.println(WiFi.localIP());
 
-  // 4. Send Data to ThingSpeak if Wi-Fi connected
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi Connected. Uploading data...");
-    
-    WiFiClient client;
-    HTTPClient http;
+  // Configure Arduino OTA
+  ArduinoOTA.setHostname("nodemcu-weather-station");
+  ArduinoOTA.begin();
 
-    String url = String(THINGSPEAK_SERVER) +
-                 "?api_key=" + String(THINGSPEAK_API_KEY) +
-                 "&field1=" + String(temperature, 1) +
-                 "&field2=" + String(humidity, 1) +
-                 "&field3=" + String(batteryVoltage, 2) +
-                 "&field4=" + String(batteryPercent);
-
-    http.begin(client, url);
-    int code = http.GET();
-
-    if (code > 0) {
-      Serial.printf("ThingSpeak OK (%d)\n", code);
-    } else {
-      Serial.println(http.errorToString(code));
-    }
-    http.end();
-  } else {
-    Serial.println("\nWiFi connection failed. Skipping upload.");
-  }
-
-  // 5. Enter Deep Sleep
-  Serial.println("Entering Deep Sleep for 30 minutes...");
-  ESP.deepSleep(DEEP_SLEEP_TIME);
+  // Exposes the latest sensor readings at http://<device-ip>/status.
+  server.on("/", HTTP_GET, handleStatus);
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/update", HTTP_GET, handleForceThingSpeakUpdate);
+  server.onNotFound(handleNotFound);
+  server.begin();
+  Serial.println("Web server started. Open http://" + WiFi.localIP().toString() + "/status");
 }
 
 void loop() {
-  // Deep sleep resets the board every cycle, so loop() is never executed.
+  // Always handle OTA requests in background
+  ArduinoOTA.handle();
+  server.handleClient();
+
+  unsigned long currentMillis = millis();
+
+  // Read DHT sensor periodically
+  if (currentMillis - prevSensorMillis >= SENSOR_INTERVAL) {
+    prevSensorMillis = currentMillis;
+
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
+
+    if (!isnan(h)) humidity = h;
+    if (!isnan(t)) temperature = t;
+  }
+
+  // Upload data periodically
+  if (currentMillis - prevUploadMillis >= UPLOAD_INTERVAL) {
+    prevUploadMillis = currentMillis;
+
+    Serial.println("---------------------------------");
+    Serial.printf("Temp: %.1f °C | Humidity: %.1f %%\n", temperature, humidity);
+    uploadData();
+    Serial.println("---------------------------------");
+  }
 }
