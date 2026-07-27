@@ -1,0 +1,83 @@
+{
+  "info": {
+    "name": "NodeMCU temps",
+    "description": null,
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Check temps",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://{{WiFiURL}}/status",
+          "protocol": "http",
+          "host": [
+            "{{WiFiURL}}"
+          ],
+          "path": [
+            "status"
+          ],
+          "query": [],
+          "variable": []
+        }
+      }
+    },
+    {
+      "name": "Check status",
+      "request": {
+        "method": "get",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://{{WiFiURL}}/",
+          "protocol": "http",
+          "host": [
+            "{{WiFiURL}}/"
+          ],
+          "path": [],
+          "query": [],
+          "variable": []
+        }
+      }
+    },
+    {
+      "name": "Update thingspeak",
+      "request": {
+        "method": "get",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://{{WiFiURL}}/update",
+          "protocol": "http",
+          "host": [
+            "{{WiFiURL}}"
+          ],
+          "path": [
+            "update"
+          ],
+          "query": [],
+          "variable": []
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "WiFiURL",
+      "value": "",
+      "type": "default"
+    }
+  ]
+}
