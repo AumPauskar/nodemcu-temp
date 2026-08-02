@@ -12,9 +12,19 @@
 DHT dht(DHTPIN, DHTTYPE);
 ESP8266WebServer server(80);
 
+// Battery Voltage Measurement
+#define BATTERY_PIN A0
+
+const float R1 = 120000.0;   // 120k
+const float R2 = 47000.0;    // 47k
+const float ADC_REF = 3.3;
+
 // Globals & Timers
 float humidity = 0;
 float temperature = 0;
+
+float batteryVoltage = 0;
+int batteryPercent = 0;
 
 unsigned long prevUploadMillis = 0;
 unsigned long prevSensorMillis = 0;
@@ -23,10 +33,47 @@ unsigned long prevSensorMillis = 0;
 const unsigned long SENSOR_INTERVAL = 2000;                      // Read sensor every 2 seconds
 const unsigned long UPLOAD_INTERVAL = UPLOAD_INTERVAL_MIN * 60000UL; // Convert minutes from secrets.h to ms
 
+float getBatteryVoltage() {
+
+  long sum = 0;
+
+  for (int i = 0; i < 20; i++) {
+    sum += analogRead(BATTERY_PIN);
+    delay(2);
+  }
+
+  float adc = sum / 20.0;
+  float adcVoltage = adc * (ADC_REF / 1023.0);
+
+  return adcVoltage * (R1 + R2) / R2 * BATTERY_CALIBRATION_FACTOR;
+}
+
+int getBatteryPercent(float v) {
+
+  if (v >= 8.40) return 100;
+  if (v >= 8.30) return 95;
+  if (v >= 8.20) return 90;
+  if (v >= 8.10) return 85;
+  if (v >= 8.00) return 80;
+  if (v >= 7.90) return 70;
+  if (v >= 7.80) return 60;
+  if (v >= 7.70) return 50;
+  if (v >= 7.60) return 40;
+  if (v >= 7.50) return 30;
+  if (v >= 7.40) return 20;
+  if (v >= 7.20) return 15;
+  if (v >= 7.00) return 10;
+  if (v >= 6.80) return 5;
+  if (v >= 5.50) return 4;   // Represents "<5%"
+  return 0;
+}
+
 void handleStatus() {
   String json = "{";
   json += "\"temperature\":" + String(temperature, 1) + ",";
   json += "\"humidity\":" + String(humidity, 1) + ",";
+  json += "\"battery_voltage\":" + String(batteryVoltage, 2) + ",";
+  json += "\"battery_percent\":\"" + String(batteryPercent) + "\",";
   json += "\"uptime_ms\":" + String(millis()) + ",";
   json += "\"wifi_rssi\":" + String(WiFi.RSSI());
   json += "}";
@@ -46,9 +93,10 @@ void handleForceThingSpeakUpdate() {
   WiFiClient client;
   HTTPClient http;
   String thingspeakUrl = String(THINGSPEAK_SERVER) +
-                         "?api_key=" + String(THINGSPEAK_API_KEY) +
-                         "&field1=" + String(temperature, 1) +
-                         "&field2=" + String(humidity, 1);
+                        "?api_key=" + String(THINGSPEAK_API_KEY) +
+                        "&field1=" + String(temperature, 1) +
+                        "&field2=" + String(humidity, 1) +
+                        "&field3=" + String(batteryPercent);
 
   http.begin(client, thingspeakUrl);
   int httpCode = http.GET();
@@ -76,9 +124,10 @@ void uploadData() {
 
   // ---------------- 1. Send to ThingSpeak ----------------
   String thingspeakUrl = String(THINGSPEAK_SERVER) +
-                         "?api_key=" + String(THINGSPEAK_API_KEY) +
-                         "&field1=" + String(temperature, 1) +
-                         "&field2=" + String(humidity, 1);
+                        "?api_key=" + String(THINGSPEAK_API_KEY) +
+                        "&field1=" + String(temperature, 1) +
+                        "&field2=" + String(humidity, 1) +
+                        "&field3=" + String(batteryPercent);
 
   http.begin(client, thingspeakUrl);
   int tsCode = http.GET();
@@ -155,6 +204,9 @@ void loop() {
 
     if (!isnan(h)) humidity = h;
     if (!isnan(t)) temperature = t;
+
+    batteryVoltage = getBatteryVoltage();
+    batteryPercent = getBatteryPercent(batteryVoltage);
   }
 
   // Upload data periodically

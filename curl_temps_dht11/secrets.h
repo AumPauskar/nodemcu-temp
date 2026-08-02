@@ -1,6 +1,9 @@
 #ifndef SECRETS_H
 #define SECRETS_H
 
+// ADC calibration factor
+#define BATTERY_CALIBRATION_FACTOR 1.0882
+
 // Wi-Fi Credentials
 const char* SECRET_SSID = "";
 const char* SECRET_PASS = "";
