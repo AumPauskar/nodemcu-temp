@@ -96,7 +96,8 @@ void handleForceThingSpeakUpdate() {
                         "?api_key=" + String(THINGSPEAK_API_KEY) +
                         "&field1=" + String(temperature, 1) +
                         "&field2=" + String(humidity, 1) +
-                        "&field3=" + String(batteryPercent);
+                        "&field3=" + String(batteryPercent) +
+                        "&field4=" + String(batteryVoltage, 2);
 
   http.begin(client, thingspeakUrl);
   int httpCode = http.GET();
@@ -127,7 +128,8 @@ void uploadData() {
                         "?api_key=" + String(THINGSPEAK_API_KEY) +
                         "&field1=" + String(temperature, 1) +
                         "&field2=" + String(humidity, 1) +
-                        "&field3=" + String(batteryPercent);
+                        "&field3=" + String(batteryPercent) +
+                        "&field4=" + String(batteryVoltage, 2);;
 
   http.begin(client, thingspeakUrl);
   int tsCode = http.GET();
